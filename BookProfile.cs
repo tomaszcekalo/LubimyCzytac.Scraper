@@ -9,5 +9,9 @@ namespace LubimyCzytac.Scraper
     public class BookProfile
     {
         public List<BookReview> Reviews { get; set; }
+        public string? BookTitle { get; internal set; }
+        public string? BookImgSrc { get; internal set; }
+        public string? AuthorUrl { get; internal set; }
+        public string? AuthorName { get; internal set; }
     }
 }

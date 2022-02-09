@@ -1,24 +1,10 @@
 ﻿using AngleSharp;
 using AngleSharp.Dom;
+using AngleSharp.Html.Parser;
 using System.Globalization;
 
 namespace LubimyCzytac.Scraper
 {
-    public interface ILubimyCzytacScraper
-    {
-        Task<UserProfile> ScrapeUserProfileAsync(long userId, CancellationToken cancellationToken = default);
-
-        Task<UserProfile> ScrapeUserProfileAsync(string url, CancellationToken cancellationToken = default);
-
-        Task<List<UserReview>> ScrapeUserReviewsAsync(string url, CancellationToken CancellationToken = default);
-
-        Task<List<UserReview>> ScrapeUserReviewsAsync(long userId, CancellationToken CancellationToken = default);
-
-        Task<BookProfile> ScrapeBookAsync(string url, CancellationToken cancellationToken = default);
-
-        Task<List<KatalogBook>> ScrapeKatalogAsync(int page, CancellationToken cancellationToken = default);
-    }
-
     public class LubimyCzytacScraper : ILubimyCzytacScraper
     {
         private IConfiguration _config;
@@ -27,9 +13,21 @@ namespace LubimyCzytac.Scraper
 
         public LubimyCzytacScraper()
         {
+            HtmlParser htmlParser = new HtmlParser();
+
             _config = Configuration.Default.WithDefaultLoader();
             _context = BrowsingContext.New(_config);
             _cultureInfo = new CultureInfo("pl-PL");
+        }
+
+        public async Task<List<KatalogBook>> ScrapeKatalogAsync(
+            string htmlSourceCode,
+            CancellationToken cancellationToken = default)
+        {
+            HtmlParser parser = new HtmlParser();
+            var document = await parser.ParseDocumentAsync(htmlSourceCode);
+            var books = ParseKatalogBooks(document);
+            return books;
         }
 
         public async Task<List<KatalogBook>> ScrapeKatalogAsync(int page, CancellationToken cancellationToken = default)
@@ -44,7 +42,7 @@ namespace LubimyCzytac.Scraper
 
         private List<KatalogBook> ParseKatalogBooks(IDocument document)
         {
-            var books = document.QuerySelectorAll("#booksFilteredList .authorAllBooks__single")
+            var books = document.QuerySelectorAll(".authorAllBooks__single")
                 .Select(x => ParseBookInKatalog(x))
                 .ToList();
             return books;
@@ -72,22 +70,61 @@ namespace LubimyCzytac.Scraper
             return profile;
         }
 
-        public async Task<UserProfile> ScrapeUserProfileAsync(long userId, CancellationToken cancellationToken = default)
+        public async Task<UserProfile> ScrapeUserProfileFromHtmlAsync(string html, CancellationToken cancellationToken = default)
+        {
+            var parser = new HtmlParser();
+            var document = await parser.ParseDocumentAsync(html);
+            var profile = ParseProfile(document);
+            return profile;
+        }
+
+        public async Task<UserProfile> ScrapeUserProfileAsync(
+            long userId,
+            CancellationToken cancellationToken = default)
         {
             var url = Consts.LubimyCzytacUserProfileUrl + userId.ToString();
             return await ScrapeUserProfileAsync(url, cancellationToken);
         }
 
-        public async Task<List<UserReview>> ScrapeUserReviewsAsync(string url, CancellationToken CancellationToken = default)
+        public async Task<UserProfileReviews> ScrapeUserReviewsAsync(
+            string url,
+            CancellationToken CancellationToken = default)
         {
             var document = await _context.OpenAsync(url, CancellationToken);
             if (document.StatusCode == System.Net.HttpStatusCode.Forbidden)
                 throw new Exception("Forbidden");
             var reviews = ParseReviewRows(document);
-            return reviews;
+            var userName = document
+                .QuerySelector(".dashBoardAccount__title span.orange ")
+                ?.TextContent
+                .Trim();
+
+            return new UserProfileReviews()
+            {
+                Name = userName,
+                UserReviews = reviews
+            };
         }
 
-        public async Task<List<UserReview>> ScrapeUserReviewsAsync(long userId, CancellationToken CancellationToken = default)
+        public async Task<UserProfileReviews> ScrapeUserReviewsFromHtmlAsync(
+            string html,
+            CancellationToken CancellationToken = default)
+        {
+            var parser = new HtmlParser();
+            var document = await parser.ParseDocumentAsync(html);
+            var reviews = ParseReviewRows(document);
+            var userName = document
+                .QuerySelector(".dashBoardAccount__title span.orange ")
+                ?.TextContent
+                .Trim();
+            return new UserProfileReviews()
+            {
+                Name = userName,
+                UserReviews = reviews
+            };
+        }
+
+        public async Task<UserProfileReviews> ScrapeUserReviewsAsync(long userId, CancellationToken CancellationToken = default)
         {
             var url = string.Format(Consts.LubimyCzytacUserReviewsUrlTemplate, userId);
             var reviews = await ScrapeUserReviewsAsync(url);
@@ -164,11 +201,36 @@ namespace LubimyCzytac.Scraper
             return profile;
         }
 
+        public async Task<BookProfile> ScrapeBookFromHtmlAsync(string html, CancellationToken cancellationToken = default)
+        {
+            var parser = new HtmlParser();
+            var document = await parser.ParseDocumentAsync(html, cancellationToken);
+            var profile = ParseBook(document);
+            return profile;
+        }
+
         private BookProfile ParseBook(IDocument document)
         {
             var result = new BookProfile()
             {
-                Reviews = document.QuerySelectorAll("#reviewsList .row")
+                BookTitle = document
+                    .QuerySelector(".book__title")
+                    ?.TextContent
+                    .Trim(),
+                BookImgSrc = document
+                    .QuerySelector(".book-cover img")
+                    ?.Attributes["src"]
+                    ?.Value,
+                AuthorUrl = document
+                    .QuerySelector(".author a.link-name")
+                    ?.Attributes["href"]
+                    ?.Value,
+                AuthorName = document
+                    .QuerySelector(".author a.link-name")
+                    ?.TextContent
+                    .Trim(),
+                Reviews = document
+                    .QuerySelectorAll("#reviewsList .row")
                     .Select(x => ParseBookReviewRow(x))
                     .Where(x => x != null)
                     .ToList()
